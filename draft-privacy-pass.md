@@ -96,84 +96,44 @@ authorizing clients with services on the Internet.
 
 --- middle
 
-# Introduction
+# Introduction {#intro}
 
 In some situations, it may only be necessary to check that a client has been
 previously authorized by a service; without learning any other information.
 Such lightweight authorization mechanisms can be useful in quickly assessing
 the reputation of a client in latency-sensitive communication.
 
-The Privacy Pass protocol was initially introduced as a mechanism for
-authorizing clients that had already been authorized in the past, without
-compromizing their privacy {{DGSTV18}}. This document seeks to standardize the
-usage and parametrization of the protocol.
+The Privacy Pass protocol was initially introduced as a mechanism for reauthorizing clients 
+that had already been authorized in the past using anonymous tokens, or credentials, without 
+compromizing their privacy {{DGSTV18}}. The protocol has two primary security properties: unlinkability 
+and one-more-token security. Briefly, unlinkability means that servers cannot link 
+an individual client's original authorization and reauthorization requests. One-more-token
+security means that a client cannot generate tokens for reauthorization on its own.
+See {{security}} for more details.
 
-The Internet performance company Cloudflare has already implemented server-side
-support for an initial version of the Privacy Pass protocol {{PPSRV}}. This
-support allows clients to bypass security mechanisms, providing that they have
-successfully passed these mechanisms previously. There is also a client-side
-implementation in the form of a browser extension that interacts with the
-Cloudflare network {{PPEXT}}.
+The Privacy Pass protocol is split into the following an offline and online phase. 
+In the offline phase, known as Initialization, servers are configured with necessary 
+cryptographic keying material needed for the remainder of the protocol and clients
+obtain this keying material. The online phase is composed of two sub-protocols,
+Issuance and Redemption, described below:
 
-The main security requirement of the Privacy Pass protocol is to ensure that
-previously authenticated clients do not reveal their identity on
-reauthorization. The protocol uses a cryptographic primitive known as a
-verifiable oblivious pseudorandom function (VOPRF) for implementing the
-authorization mechanism. The VOPRF is implemented using elliptic curves and is
-currently in a separate standardization process {{OPRF}}. The protocol is split
-into three stages. The first two stages, initialisation and evaluation, are
-essentially equivalent to the VOPRF setup and evaluation phases from {{OPRF}}.
-The final stage, redemption, essentially amounts to revealing the client's
-secret inputs in the VOPRF protocol. The security (pseudorandomness) of the
-VOPRF protocol means that the client retains their privacy even after revealing
-this data.
+1. Issuance: In this phase, a client and server run a protocol wherein clients receive
+as output an anonymous credential and servers learn nothing.
+2. Redemption: In this phase, a client reveals information which proves a prior Issuance protocol
+invocation took place, including, for example, secret inputs used for Issuance and the 
+resulting anonymous credential. Servers learn nothing beyond proof of prior Issuance completion.
 
-In this document, we will give a formal specification of the Privacy Pass
-protocol to be used in settings that require high performance. We will specify
-the necessary cryptographic operations required by the underlying VOPRF, along
-with recommendations on how to perform key rotation
+This document specifies a single instance of the Privacy Pass protocol based on the VOPRF
+construction. In this variant, the Initialisation and Issuance phases corresponding to 
+the setup and issuance phases of the VOPRF in {{OPRF}}. In doing so, this document also 
+specifies cryptographic operations required by the underlying VOPRF, along with recommendations 
+for cryptographic key rotation. This protocol instance is designed for applications which 
+require efficient and lightweight reauthorization checks.
 
-## Terminology
+The Privacy Pass protocol is designed to allow other cryptographic algorithms for token 
+token creation and verification in the Issuance and Redemption phases, respectively. 
 
-The following terms are used throughout this document.
-
-- PRF: Pseudorandom function
-- VOPRF: Verifiable oblivious PRF {{OPRF}}
-- Server: A service that provides access to a certain resource (typically
-  denoted S)
-- Client: An entity that seeks authorization from a server (typically denoted C)
-- Key: Server VOPRF key
-- Commitment: Corresponding public key to server's VOPRF key.
-
-## Preliminaries
-
-Throughout this draft, let D be some object corresponding to an opaque data type
-(such as a group element). We write bytes(D) to denote the encoding of this data
-type as raw bytes (octet strings). We assume that such objects can also be
-interpreted as Buffer objects, with each internal slot in the buffer set to the
-value of the one of the bytes. For two objects x and y, we denote the
-concatenation of the bytes of these objects by (bytes(x) .. bytes(y)). We assume
-that all bytes are first base64-encoded before they are sent as part of a
-protocol message.
-
-We use the notation `[ Ti ]` to indicate an array of objects T1, ... , TQ where
-the size of the array is Q, and the size of Q is implicit from context.
-
-### Elliptic curve points
-
-When encoding elliptic curve points into existing data structures or into
-protocol messages, we assume that the curve points are first encoded into bytes.
-We allow both uncompressed and compressed encodings, as long as the client and
-server are aligned on the encodings that they used. Compressed encodings provide
-storage and communication benefits but are slightly more expensive to decode.
-
-### Protocol messages
-
-Protocol messages can either be encoded in raw byte format, as base64-encoded
-string objects, or as JSON objects where all strings are represented in
-base64-encoded format.
-
-## Layout
+The remainder of the document is organized as follows:
 
 - {{overview}}: A generic overview of the Privacy Pass protocol based on VOPRFs.
 - {{registry}}: Describes the format of trusted registries that are used for
@@ -187,28 +147,85 @@ base64-encoded format.
 - {{params}}: A summary of recommended parameter settings for ensuring privacy
   and security features of the protocol.
 
-## Requirements
+## Requirements Notation
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
-"SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be
-interpreted as described in {{RFC2119}}.
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+"OPTIONAL" in this document are to be interpreted as described in
+BCP14 {{!RFC2119}} {{!RFC8174}}  when, and only when, they appear in
+all capitals, as shown here.
 
-# Generalized protocol overview {#overview}
+# Conventions and Terminology
 
-In this document, we will be assuming that a client (C) is attempting to
-authenticate itself in a lightweight manner to a server (S). The authorization
-mechanism should not reveal to the server anything about the client; in
-addition, the client should not be able to forge valid credentials in situations
-where it does not possess any.
+The following terms are used throughout this document.
 
-In this section, we will give a broad overview of how the Privacy Pass protocol
-functions in achieving these goals. The generic protocol can be split into three
-phases: initialisation, issuance and redemption. As we mentioned previously, the
-first two stages are essentially identical to the setup and evaluation phases of
-the VOPRF in {{OPRF}}. The last stage, redemption, corresponds to the client
-revealing their secret input data during the VOPRF protocol to the server. The
-server can use this data to confirm that the client has a valid VOPRF output,
-without being able to link the data to any individual issuance phase.
+- PRF: Pseudorandom Function.
+- VOPRF: Verifiable Oblivious PRF {{OPRF}}.
+- Server: A service that provides access to a certain resource (typically
+  denoted S).
+- Client: An entity that seeks authorization from a server (typically denoted C)
+- Key: Server VOPRF key.
+- Commitment: Corresponding public key to server's VOPRF key.
+
+
+
+Certain parts of the protocol are parameterized by cryptographic groups, elements,
+or quantities. Below is a table of these items.
+
+| Symbol | Meaning | Relevance |
+|:------:|---------|-----------|
+
+| l | XXX | XXX |
+| p | An integer prime number | XXX |
+| r | Order of G | XXX |
+
+| G | An abelian group | XXX |
+
+
+
+
+Throughout this draft, let D be some object corresponding to an opaque data type
+(such as a group element). We write bytes(D) to denote the encoding of this data
+type as raw bytes (octet strings). We assume that such objects can also be
+interpreted as Buffer objects, with each internal slot in the buffer set to the
+value of the one of the bytes. For two objects x and y, we denote the
+concatenation of the bytes of these objects by (bytes(x) .. bytes(y)). We assume
+that all bytes are first base64-encoded before they are sent as part of a
+protocol message.
+
+We use the notation `[ Ti ]` to indicate an array of objects T1, ... , TQ where
+the size of the array is Q, and the size of Q is implicit from context.
+
+## Elliptic curve points
+
+When encoding elliptic curve points into existing data structures or into
+protocol messages, we assume that the curve points are first encoded into bytes.
+We allow both uncompressed and compressed encodings, as long as the client and
+server are aligned on the encodings that they used. Compressed encodings provide
+storage and communication benefits but are slightly more expensive to decode.
+
+## Protocol messages
+
+Protocol messages can either be encoded in raw byte format, as base64-encoded
+string objects, or as JSON objects where all strings are represented in
+base64-encoded format.
+
+# Protocol overview {#overview}
+
+In this section, we present a broad overview of the Privacy Pass protocol. Fundamentally,
+Privacy Pass is a protocol designed for anonymous authentication between
+client and server. In particular, it allows for clients to publicly authenticate
+to a server -- during the protocol Issuance phase -- and receive anonymous
+credentials for future use. Clients can then later use these tokens in the 
+Redemption phase as a form of anonymous authentication, asserting they previously
+completed the Issuance phase. 
+
+As mentioned in {{intro}}, the generic protocol can be split into an online an 
+offline phase. The offline Initialization and online Issuance phases correspond 
+to the setup and issuance phases of the VOPRF in {{OPRF}}. The last phase, Redemption, 
+corresponds to the client revealing their secret input data during the VOPRF protocol 
+to the server. The server can use this data to confirm that the client has a valid 
+VOPRF output, without being able to link the data to any individual issuance phase.
 
 Throughout this document, we adhere to the recommendations laid out in {{OPRF}}
 in integrating the VOPRF protocol into our wider workflow. Where necessary, we
@@ -220,304 +237,142 @@ We decide against defining abstract interfaces for enclosing Privacy Pass
 data and functionality. Instead, we describe the Privacy Pass protocol in the
 same group setting that is used in {{OPRF}}.
 
-## Key initialisation phase
+## Offline Initialisation phase
 
-In the initialisation phase, essentially we run the VOPRF setup phase in that
-the server runs VOPRF_Setup(l) where l is the required bit-length of the prime
-used in establishing the order of the group GG. This outputs the tuple (k,Y,p)
-where: p = p(l) is the prime order of GG = GG(l); k is a uniformly sampled
-element from GF(p); and Y = kG for some fixed generator of GG.
-
-However, the server must first come to an agreement on what group instantiation
-to support. This involves choosing an instantiation with the required security
-level implied by the choice of l. The server has a list of supported group
-params (GROUP_PARAMS) and chooses an identifier, id, associated with the
-preferred group configuration, and also outputs the implied length of l. It
-creates a Privacy Pass key object denoted by ppKey that has fields "private",
-"public" and "group". It sets ppKey.private = bytes(k), ppKey.public = bytes(Y)
-and ppKey.group = id.
-
-The server creates a JSON object of the form below.
-
-~~~ json
-  {
-    "Y": pp_key.public,
-    "expiry": <expiry_date>,
-    "sig": <signature>
-  }
-~~~
-
-The field "expiry" corresponds to an expiry date for the newly sampled key. We
-recommend that each key has a lifetime of between 1 month and 6 months. The
-field "sig" holds an ASN1-encoded ECDSA signature evaluated over the contents of
-"Y" and "expiry". The ECDSA parameters should be equivalent to the group
-instantiation used for the OPRF, and the signing key (ecdsaSK) should be
-long-term with a corresponding publicly available verification key (ecdsaVK). We
-summarize the creation of this object using the algorithm PP_key_init(), which
-we define below.
-
-~~~ js
-  function PP_key_init(k, Y, id) {
-    var ppKey = {}
-    ppKey.private = k
-    ppKey.public = Y
-    ppKey.group = id
-    var today = new Date()
-    var expiry = today.setMonth(today.getMonth() + n);
-    var obj = {
-      Y: ppKey.public,
-      expiry: expiry,
-      sig: ECDSA.sign(ecdsaSK, ppKey.public .. bytes(expiry)),
-    }
-    return [ppKey, obj]
-  }
-~~~
-
-Note that the variable n above should correspond to the number of months ahead
-that the expiry date should correspond to.
-
-We give a diagrammatic representation of the initialisation phase below.
+In the Initialisation phase, servers run the Setup and KeyGen algorithms corresponding to
+the desired ciphersuite to produce group parameters and a corresponding private key. Setup is
+a deterministic function, so the parameters do not change per invocation.
+For VOPRF ciphersuites, this amounts to running the Setup algorithm defined in {{OPRF}},
+which produces a private key k and cryptographic group generator. Given a key k,
+a server then creates a PrivacyPassKeyPackage structure of the form below.
 
 ~~~
-    C(ecdsaVK)                                S(ecdsaSK)
-    ----------------------------------------------------------------------
-                                              l = GROUP_PARAMS[id]
-                                              (k,Y,p) = VOPRF_Setup(l)
-                                              [ppKey,obj] = PP_key_init(k,Y,id)
-
-                                obj
-                        <-------------------
-
-    public = key.Y
-    if (!ECDSA.verify(ecdsaVK, public .. bytes(obj.expiry)) {
-      panic(KEY_VERIFICATION_ERROR)
-    } else if (!(new Date() > obj.expiry)) {
-      panic(KEY_VERIFICATION_ERROR)
-    }
-    store(obj.id, obj.public)                            push(key)
+struct {
+    uint16 cpiphersite; 
+    opaque public_key<0..2^16-1>;
+    uint64 expiry_date_timestamp;
+    opaque signature<0..2^16-1>;
+} PrivacyPassKeyPackage;
 ~~~
 
-The variable obj essentially corresponds to a cryptographic commitment to the
-server's VOPRF key. We abstract all signing and verification of ECDSA signatures
-into the ECDSA.sign and ECDSA.verify functionality {{DSS}}.
+: public_key
+The public key used in the PrivacyPass protocol, corresponding to the private key k.
 
-In the initialisation phase above, we require that the server contacts each
-viable client. In {{registry}} we discuss the possibility of uploading public
-key material to a trusted registry that client's access when communicating with
+: expiry_date:
+The NTP timestamp {{RFC5905}} corresponding to when the corresponding public_key expires.
+It is RECOMMENDED that each key has a lifetime between 1 and 6 months.
+
+: signature
+The ASN1-encoded signature evaluated over the contents of the PrivacyPassKeyPackage struct.
+
+Clients obtain a copy of the server's PrivacyPassKeyPackage structure either directly
+from the server or via some other means. {{registry}} discusses the possibility of uploading 
+public key material to a trusted registry that client's access when communicating with
 the server.
 
-## Issuance phase
+## Online phases
 
-The issuance phase allows the client to receive VOPRF evaluations from the
-server. The issuance phase essentially corresponds to a VOPRF evaluation phase
-{{OPRF}}. In essence, the client generates a valid VOPRF input x (a sequence of
-bytes from some unpredictable distribution), and runs the VOPRF evaluation phase
-with the server. The client receives an output y of the form:
+### Issuance phase
 
-~~~ lua
-    y = VOPRF_Finalize(x, N, aux)
-~~~
-
-where N is a group element, and aux is auxiliary data that is generated by the
-client. More specifically, N is an unblinded group element equal to k*H_1(x)
-where H_1 is a random oracle that outputs elements in GG. The client stores (x,
-y) as recommended in {{OPRF}}. We give a diagrammatic overview of the protocol
-below.
+In the Issuance phase, a client and server run the VOPRF evaluation protocol
+from {{OPRF}} given client input x and server private key k corresponding to 
+the public key in PrivacyPassKeyPackage. In particular, a client C generates an
+IssuanceRequest message (as described below) and receives an IssuanceResponse
+message from a server S. These messages have the following structure.
 
 ~~~
-    C(x, aux)                                 S(ppKey)
-    ----------------------------------------------------------------------
-    var ciph = retrieve(S.id)
-    var (r,M) = VOPRF_Blind(x)
-    var req = {
-      type: "single",
-      element: M,
+struct {
+  uint8 issuance_type;
+  opaque context<0..2^8-1>;
+  select (IssuanceRequest.issuance_type) {
+    case single_request: {
+      opaque blinded_input<0..2^16-1>;
     }
-
-                              req
-                     ------------------->
-
-                                            M = req.element
-                                            (Z,D) = VOPRF_Eval(ppKey.private,
-                                                ciph.G,Y,M)
-                                            var resp = {
-                                              element: Z,
-                                              proof: D,
-                                              version: "key_version",
-                                            }
-
-                             resp
-                     <------------------
-
-    var elt = resp.element
-    var proof = resp.proof
-    var version = resp.version
-    var obj = retrieve(S.id, version)
-    if obj == "error" {
-      panic(KEY_VERIFICATION_ERROR)
+    case batched_request: {
+      uint8 batch_count;
+      opaque blinded_inputs<0..2^16-1>;
     }
-    var N = VOPRF_Unblind(r,ciph.G,obj.Y,M,elt,proof)
-    var y = VOPRF_Finalize(x,N,aux)
-    if (y == "error") {
-      panic(CLIENT_VERIFICATION_ERROR)
-    }
+  }
+} IssuanceRequest;
 
-    push((ciph,x,y,aux))
+struct {
+  uint8 issuance_type;
+  opaque context<0..2^8-1>;
+  select (IssuanceRequest.issuance_type) {
+    case single_request: {
+      opaque signed_output<0..2^16-1>;
+    } 
+    case batched_request: {
+      opaque signed_outputs<0..2^16-1>;
+    }
+} IssuanceResponse; 
 ~~~
 
-In the diagram above, the client knows the VOPRF ciphersuite supported by the
-server when it retrieves in the first step. It uses this information to
-correctly perform group operations before sending the first message.
+The Issuance protocol runs as follows:
 
-## Redemption phase
+1. C computes x' = Commit(x), (M, r) = Blind(x'), constructs an IssuanceRequest
+with IssuanceRequest.issuance_type = 0x01, unique IssuanceRequest.context value,
+and IssuanceRequest.blinded_input = M. C sends IssuanceRequest to S.
+2. On an input request IssuanceRequest of type 0x01, S computes Z = Evaluate(k, IssuanceRequest.M), 
+constructs an IssuanceResponse with matching type and context and 
+IssuanceResponse.signed_output = Z. S sends IssuanceResponse to C.
+3. On an input response IssuanceResponse with matching context, C computes 
+N = Unblind(IssuanceResponse.Z, r), y = Finalize(x', N), and returns y.
 
-The redemption phase allows the client to reauthenticate to the server, using
-data that it has received from a previous issuance phase. By the security of the
-VOPRF, even revealing the original input x that is used in the issuance phase
-does not affect the privacy of the client.
+C determines the underlying VOPRF ciphersuite from PrivacyPassKeyPackage.ciphersuite.
+C stores the Issuance input and output tuple (x, y) as the anonymous credential from 
+this evaluation.
 
-~~~
-    C()                                     S(ppKey)
-    ----------------------------------------------------------------------
-    ciph1 = retrieve(S.id, "ciphersuite")
-    a = pop()
-    while (a != undefined) {
-      (ciph2,x,y,aux) = a
-      if (ciph1 != ciph2) {
-        // ciphersuites do not match
-        a = pop()
-        continue
-      }
-    }
-    if (a == undefined) {
-      // no valid data to redeem
-      return
-    }
+In the last step of the Issuance phase, the client runs Finalize and store the output. 
+Some applications may need to link the output of Finalize to the future subsequent
+Redemption phase. To achieve this, clients SHOULD tailor the `aux` data to something
+specific to the Issuance phase just run.
 
-                        (x,y,aux)
-                  -------------------->
+#### Batched Issuance phase
 
-                                          if (store.includes(x)) {
-                                            panic(DOUBLE_SPEND_ERROR)
-                                          }
-                                          T = H1(x)
-                                          N' = OPRF_Eval(ppKey.private, T)
-                                          y' = OPRF_Finalize(x,N',aux)
-                                          resp = (y' == y)
-                                              ? "success"
-                                              : "failure"
-                                          store.push(x)
+Clients and servers may run the Issuance phase in batch mode, wherein a client sends multiple 
+blinded values to a server in a single round. This avoids a single round trip per token and 
+also permits more efficient VOPRF proof construction. Let B be the batch count for a given 
+invocation of this protocol. This modified phase works as follows:
 
-                          resp
-                  <--------------------
+1. C computes xi' = Commit(xi) and (Mi, ri) = Blind(xi') for i = 1,...,B. C then
+constructs an IssuanceRequest with IssuanceRequest.issuance_type = 0x02, unique 
+IssuanceRequest.context value, and IssuanceRequest.blinded_inputs to the concenation
+of M1,...,MB.
+2. On an input request IssuanceRequest of type 0x02, S parses IssuanceRequest.blinded_inputs as
+B = IssuanceRequest.batch_count elements M1,...,MB, and computes Zi = Evaluate(k, Mi) for 1 = 1,..,B.
+S creates an IssuanceResponse with matching type and context, and 
+IssuanceResponse.signed_outputs = Z1,...,ZB.
+3. On an input response IssuanceResponse with matching type and context, C parses 
+IssuanceResponse.signed_outputs as B signed outputs, Z1,...,ZB, and then computes
+Ni = Unblind(IssuanceResponse.Zi, ri), yi = Finalize(xi', Ni), and returns 
+((x1, y1), ..., (xB, yB)).
 
-    output resp
-~~~
+### Redemption phase
 
-Note that the server uses the API provided by OPRF_Eval and OPRF_Finalize,
-rather than the corresponding VOPRF functions. This is because the VOPRF
-functions also compute zero-knowledge proof data that we do not require at this
-stage of the protocol.
-
-### Batched Issuance phase
-
-To avoid performing a separate round-trip for each token and to generate a more performant
-VOPRF proof, the client and server can do batched issuance of tokens, where multiple x are
-blinded and sent in a patch. The client can then perform an adapted protocol to receive
-VOPRF evaluations from the server, generating up to batchsize tokens based on the retrieved key
-commitment from the server. The client generates valid VOPRF inputs xi (an array of
-a sequence of bytes from some unpredictable distribution), and runs the VOPRF evaluation
-phase with the server. The client receives an output yi of the form:
-
-~~~ lua
-    yi = VOPRF_Finalize(xi, Ni, aux)
-~~~
-
-where Ni is an array of group elements, and aux is auxiliary data that is generated
-by the client. More specifically, Ni is the unblinded group elements equal to k*H_1(xi)
-where H_1 is a random oracle that outputs elements in GG. The client stores pairs of elements
-from xi, yi as (x, y) as recommended in {{OPRF}}. We give a diagrammatic overview of the
-protocol below.
+In the Redemption phase, the client uses an anonymous token (x, y) as an authenticator
+to the server. This is packaged in the following RedemptionRequest structure:
 
 ~~~
-    C(x, aux)                                 S(ppKey)
-    ----------------------------------------------------------------------
-    var (ciph, batchsize) = retrieve(S.id)
-    var xi = for i in batchsize: <-$ GF(p)
-    var (ri,Mi) = for x in [xi]: VOPRF_Blind(x)
-    var req = {
-      type: "batched",
-      elements: Mi,
-    }
-
-                              req
-                     ------------------->
-
-                                            if (req.type == "batched") {
-                                              Mi = req.elements
-                                              (Zi,D) = VOPRF_Batch_Eval(ppKey.private,
-                                                  ciph.G,Y,Mi)
-                                              var resp = {
-                                                elements: Zi,
-                                                proof: D,
-                                                version: "key_version",
-                                              }
-                                            } else {
-                                              # Perform standard issuance phase
-                                              ...
-                                            }
-
-                             resp
-                     <------------------
-
-    var elt = resp.elements
-    var proof = resp.proof
-    var version = resp.version
-    var obj = retrieve(S.id, version)
-    if obj == "error" {
-      panic(KEY_VERIFICATION_ERROR)
-    }
-    var Ni = VOPRF_Batch_Unblind(ri,ciph.G,obj.Y,Mi,elt,proof)
-    var yi = VOPRF_Batch_Finalize(xi,Ni,aux)
-    if (yi == "error") {
-      panic(CLIENT_VERIFICATION_ERROR)
-    }
-
-    for (x,y) in [xi, yi]: push((ciph,x,y,aux))
+struct {
+  opaque input<0..2^16-1>;
+  opaque output<0..2^16-1>;
+} RedemptionRequest;
 ~~~
 
-In the diagram above, the client knows the VOPRF ciphersuite supported by the
-server when it retrieves in the first step. It uses this information to
-correctly perform group operations before sending the first message.
+The Redemption phase between client C to server S using anonymous token (x, y) works 
+as follows.
 
+1. C creates a RedemptionRequest with RedemptionRequest.input = x and RedemptionRequest.output = y, and
+sends RedemptionRequest to S.
+2. On input redemption request RedemptionRequest, S computes x' = Commit(RedemptionRequest.x), 
+N' = Evaluate(k, x'), and y' = Finalize(x', N'). S accepts the credential if 
+y' = RedemptionRequest.y. Otherwise, it rejects the credential.
 
-### Double-spend protection
-
-To protect against clients that attempt to spend a value x more than once, the
-server uses an index, store, to collect valid inputs and then check against in
-future protocols. Since this store needs to only be optimized for storage and
-querying, a structure such as a Bloom filter suffices. Importantly, the server
-must only eject this storage after a key rotation occurs since all previous
-client data will be rendered obsolete after such an event.
-
-### Finalization during redemption
-
-The last step if the issuance phase for the client is to run VOPRF_Finalize and
-store the output. In some applications, it may be necessary to link the output
-of VOPRF_Finalize to the actual redemption that is occurring. This can be done
-by tailoring the auxiliary data `aux` to something specific.
-
-In order to do this, it is necessary to store only (ciph, x, N) in the issuance
-phase of the protocol. Then during the redemption phase, generate auxiliary data
-`aux` and compute VOPRF_Finalize(x,N,aux) after retrieving the triplet above.
-
-## Error types {#errors}
-
-- KEY_VERIFICATION_ERROR: Error occurred when verifying signature and expiry
-  date for a server public key
-- CLIENT_VERIFICATION_ERROR: Error verifying issuance response from server.
-- DOUBLE_SPEND_ERROR: Indicates that a client has attempted to redeem a token
-  that has already been used for authorization
+For protection against clients re-using anonymous credentials, servers SHOULD store previously 
+used (and accepted) inputs. A Bloom filter suffices for this purposes. Moreover, this storage
+should be bound to the lifetime of the public key. After key rotation, servers SHOULD erase
+any previous client input state.
 
 # Key registration {#registry}
 
@@ -924,8 +779,17 @@ these should be clearable by the client using standard deletion methods.
 
 # Security considerations {#security}
 
-We present a number of security considerations that prevent a malicious actors
-from abusing the protocol.
+The Privacy Pass instantiation in this document has the following security properties:
+
+- Unlinkability: The Evaluation and Redemption phases are completely independent. This means
+a server cannot link a Redemption flow to a specific prior Evaluation flow. This property
+is limited by protocol messages exchanged between client and server. Other linkability 
+vectors exist, e.g., a client IP address.
+- One-more-token security: A client cannot forge new anonymous credentials given any
+of its existing tokens without access to the server's private key.
+
+In the following sections, we present a number of security considerations that prevent a 
+malicious actors from abusing the protocol.
 
 ## Double-spend protection
 
